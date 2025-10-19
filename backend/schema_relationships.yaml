@@ -1,0 +1,24 @@
+relationships:
+  - from_table: drug_master
+    from_column: hcpcs_code
+    to_table: drug_class
+    to_column: hcpcs_code
+    description: drug_master links to drug_class by hcpcs_code
+
+  - from_table: asp_history
+    from_column: hcpcs_code
+    to_table: drug_master
+    to_column: hcpcs_code
+    description: asp_history contains ASP price history for each drug in drug_master
+
+  - from_table: wac_history
+    from_column: hcpcs_code
+    to_table: drug_master
+    to_column: hcpcs_code
+    description: wac_history contains WAC price history for each drug in drug_master
+
+    - from_table: awp_history
+    from_column: hcpcs_code
+    to_table: drug_master
+    to_column: hcpcs_code
+    description: awp_history contains AWP price history for each drug in drug_master
