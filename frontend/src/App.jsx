@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { joinPaths } from "./utils/path";
 import Login from "./components/Login.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import QueryForm from "./components/QueryForm.jsx";
@@ -12,6 +13,8 @@ const CACHE_KEY = "bnb_cache";
 const CACHE_LIMIT = 5;
 const HISTORY_LIMIT = 20;
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
 const getInitialHistory = () => {
   try {
@@ -114,7 +117,7 @@ function App() {
 
     setIsLoading(true);
     try {
-      const res = await fetch("/api/query", {
+      const res = await fetch(joinPaths(API_BASE_URL, "/query"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

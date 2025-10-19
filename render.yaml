@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: bnb-chat-backend
+    env: python
+    plan: starter
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: AUTH_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: PINECONE_REGION
+        sync: false
+      - key: PINECONE_INDEX
+        sync: false
+      - key: NEON_DB_URI
+        sync: false
+      - key: MPLCONFIGDIR
+        value: /tmp/mpl
+      - key: CORS_ALLOW_ORIGINS
+        value: https://bnb-chat-frontend.onrender.com
+
+  - type: static
+    name: bnb-chat-frontend
+    plan: starter
+    buildCommand: cd frontend && npm install && npm run build
+    publishDirectory: frontend/dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://bnb-chat-backend.onrender.com
