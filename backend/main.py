@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
+import uvicorn
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
@@ -37,6 +38,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/")
+def health_check():
+    return {"status": "ok"}
 
 
 class QueryOptions(BaseModel):
@@ -236,3 +242,8 @@ def _authorize(authorization: Optional[str] = Header(default=None)) -> None:
 @app.post("/query", response_model=QueryResponse)
 async def query_endpoint(payload: QueryRequest, _: None = Depends(_authorize)):
     return run_pipeline(payload.query.strip(), payload.options)
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
