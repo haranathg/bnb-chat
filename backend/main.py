@@ -241,7 +241,10 @@ def _authorize(authorization: Optional[str] = Header(default=None)) -> None:
 
 @app.post("/query", response_model=QueryResponse)
 async def query_endpoint(payload: QueryRequest, _: None = Depends(_authorize)):
-    return run_pipeline(payload.query.strip(), payload.options)
+    try:
+        return run_pipeline(payload.query.strip(), payload.options)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 if __name__ == "__main__":
