@@ -16,6 +16,7 @@ import subprocess
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import json
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
@@ -30,6 +31,10 @@ from bnb_retriever import BnbRetriever
 #  Environment setup
 # =============================================================================
 load_dotenv()
+
+PROMPTS_PATH = os.path.join(os.path.dirname(__file__), "prompts.json")
+with open(PROMPTS_PATH, "r", encoding="utf-8") as _prompt_file:
+    PROMPTS = json.load(_prompt_file)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 NEON_DB_URI = os.getenv("NEON_DB_URI")
@@ -53,21 +58,8 @@ def generate_sql(question: str) -> str:
     schema_context = retriever.as_prompt_context(question)
 
     # 2️⃣ Include that context in the LLM prompt
-    sql_prompt = (
-        "You are a SQL expert for healthcare drug pricing data working with Postgres.\n"
-        "Use the database schema context below to generate valid SQL that runs without errors.\n"
-        "Rules you must follow:\n"
-        "- Only reference tables and columns that appear in the schema context.\n"
-        "- If you need to combine window functions with aggregation, first compute the window results in a CTE or subquery, and aggregate in an outer query (Postgres does not allow aggregating directly over a window function result).\n"
-        "- When a question references higher-level groupings (e.g., drug classes, categories, therapeutics), join the relevant dimension tables (such as drug_class) so those fields can be selected or grouped.\n"
-        "- Prefer explicit column names (e.g., quarter_label, asp_value) and include necessary joins using the provided relationships.\n"
-        "- When filtering based on statistics derived from window functions (e.g., comparing to class means or standard deviations), compute any boolean flags or thresholds inside the CTE/subquery where the statistics exist, and filter on those flags in the outer query rather than referencing window columns directly in HAVING clauses.\n"
-        "- Do not reference SELECT aliases directly in WHERE or HAVING clauses; if you need to filter by a derived value (including CASE expressions), compute it inside a CTE/subquery and apply the filter there, or wrap the SELECT in an outer query and filter on the alias from that outer scope.\n"
-        "- Filter out NULL or zero-like records when they would distort averages or standard deviations (e.g., ignore ASP values that are NULL).\n"
-        "- Limit results sensibly (e.g., LIMIT 10) when returning ranked lists.\n\n"
-        f"Schema context:\n{schema_context}\n\n"
-        f"Question: {question}\n\n"
-        "Return ONLY the SQL query, no markdown or explanations."
+    sql_prompt = PROMPTS["generate_sql"].format(
+        schema_context=schema_context, question=question
     )
 
     response = llm.invoke([HumanMessage(content=sql_prompt)])
@@ -101,19 +93,7 @@ def safe_execute_sql(question, sql):
     df = execute_sql(sql)
     if df.empty:
         print("🤖 No data found — revalidating SQL structure with LLM...")
-        fixed_sql_prompt = (
-            "You generated the following SQL, but it caused an error or returned no data:\n"
-            f"{sql}\n\n"
-            f"User question: {question}\n"
-            "Please correct any issues and return valid Postgres SQL that adheres to these rules:\n"
-            "- Only reference tables/columns present in the schema context of the original query.\n"
-            "- If you mix window functions with aggregation, compute the window values in a CTE/subquery first, then aggregate in an outer query (Postgres restriction).\n"
-            "- When filtering by derived values (including CASE results or window-derived statistics), compute the filter flag inside the CTE/subquery or wrap the SELECT in an outer query and filter there; do not reference SELECT aliases directly in WHERE/HAVING.\n"
-            "- Join the necessary dimension tables when the question references higher-level groupings (e.g., include drug_class when talking about classes).\n"
-            "- Filter out NULL/zero-like metric values when they would distort the results (e.g., ignore NULL ASPs).\n"
-            "- Limit results sensibly when returning ranked lists.\n"
-            "Return only the corrected SQL query without markdown."
-        )
+        fixed_sql_prompt = PROMPTS["retry_sql"].format(sql=sql, question=question)
         fixed_sql = clean_sql(llm.invoke([HumanMessage(content=fixed_sql_prompt)]).content)
         print(f"🔁 Retrying with fixed SQL:\n{fixed_sql}")
         df = execute_sql(fixed_sql)
@@ -187,12 +167,7 @@ def open_chart_image(image_path="last_result.png"):
 # =============================================================================
 summary_prompt = PromptTemplate(
     input_variables=["question", "data"],
-    template=(
-        "You are a healthcare market analyst.\n"
-        "Question: {question}\n"
-        "Data (top 10 rows):\n{data}\n\n"
-        "Summarize the main insights, patterns, and any outliers clearly."
-    ),
+    template=PROMPTS["summary"],
 )
 
 def summarize_stage(inputs):
