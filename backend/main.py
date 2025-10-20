@@ -5,6 +5,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, List, Optional
+import re
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -28,6 +29,7 @@ from bnb_lcel_pipeline import (  # noqa: E402
 )
 
 AUTH_TOKEN = os.getenv("AUTH_TOKEN")
+MAX_RAW_ROWS = int(os.getenv("MAX_RAW_ROWS", "200"))
 
 app = FastAPI(title="bnb-chat-with-data API")
 
@@ -151,6 +153,20 @@ def _render_chart_to_base64(df: pd.DataFrame, question: str, summary: str) -> Op
         plt.close(fig)
 
 
+def _validate_sql_for_guardrails(question: str, sql: str) -> None:
+    lowered = sql.lower()
+    if re.search(r"\blimit\b", lowered) is None:
+        raise HTTPException(
+            status_code=400,
+            detail="For security reasons, generated SQL must include a LIMIT clause. Please refine the question.",
+        )
+    if re.search(r"select\s+\*", lowered):
+        raise HTTPException(
+            status_code=400,
+            detail="Queries must reference explicit columns; 'SELECT *' is not allowed.",
+        )
+
+
 def _build_summary(question: str, df: pd.DataFrame) -> str:
     if df is None or df.empty:
         return (
@@ -195,8 +211,10 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
     buffer = io.StringIO()
     with redirect_stdout(buffer), redirect_stderr(buffer):
         sql = generate_sql(question)
+        _validate_sql_for_guardrails(question, sql)
         df, final_sql = _execute_with_retry(question, sql)
 
+    _validate_sql_for_guardrails(question, final_sql)
     retriever.debug = previous_debug
 
     summary = _build_summary(question, df)
@@ -205,17 +223,23 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
 
     raw_columns = None
     raw_rows = None
+    raw_data_note = ""
     if options.show_raw and df is not None and not df.empty:
         cleaned = df.where(pd.notnull(df), None)
-        raw_columns = cleaned.columns.tolist()
-        raw_rows = [
-            [_serialize_value(value) for value in row]
-            for row in cleaned.to_numpy().tolist()
-        ]
+        if len(cleaned) > MAX_RAW_ROWS:
+            raw_data_note = (
+                f"Raw data withheld: result contains {len(cleaned)} rows which exceeds the safety limit of {MAX_RAW_ROWS}."
+            )
+        else:
+            raw_columns = cleaned.columns.tolist()
+            raw_rows = [
+                [_serialize_value(value) for value in row]
+                for row in cleaned.to_numpy().tolist()
+            ]
 
     debug_output = buffer.getvalue().strip() if options.debug else ""
 
-    return QueryResponse(
+    response = QueryResponse(
         analysis_html=analysis_html,
         raw_columns=raw_columns,
         raw_data=raw_rows,
@@ -223,6 +247,9 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
         sql=final_sql,
         charts=[],
     )
+    if raw_data_note:
+        response.analysis_html += f"\n<p><em>{raw_data_note}</em></p>"
+    return response
 
 
 def _authorize(authorization: Optional[str] = Header(default=None)) -> None:
