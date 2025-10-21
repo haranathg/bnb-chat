@@ -21,14 +21,21 @@ function RawDataTable({ response, visible }) {
     }
   }
 
+  const note = response?.raw_data_note;
+
   return (
-    <section className="card p-6">
-      <div className="mb-4 flex items-center justify-between">
+    <section className="card p-6 space-y-4">
+      <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-gray-900">Raw data</h2>
         <span className="text-xs uppercase tracking-wide text-gray-400">
           Showing {normalizedRows.length} rows
         </span>
       </div>
+      {note && (
+        <p className="text-sm text-indigo-700">
+          {note}
+        </p>
+      )}
       <div className="max-h-80 overflow-auto rounded-lg border border-gray-200">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-100">

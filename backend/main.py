@@ -29,7 +29,7 @@ from bnb_lcel_pipeline import (  # noqa: E402
 )
 
 AUTH_TOKEN = os.getenv("AUTH_TOKEN")
-MAX_RAW_ROWS = int(os.getenv("MAX_RAW_ROWS", "200"))
+MAX_RAW_ROWS = int(os.getenv("MAX_RAW_ROWS", "10"))
 
 app = FastAPI(title="bnb-chat-with-data API")
 
@@ -64,6 +64,7 @@ class QueryResponse(BaseModel):
     debug_logs: Optional[str] = None
     sql: str
     charts: Optional[List[dict]] = None
+    raw_data_note: Optional[str] = None
 
 
 def _serialize_value(value: Any) -> Any:
@@ -228,8 +229,15 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
         cleaned = df.where(pd.notnull(df), None)
         if len(cleaned) > MAX_RAW_ROWS:
             raw_data_note = (
-                f"Raw data withheld: result contains {len(cleaned)} rows which exceeds the safety limit of {MAX_RAW_ROWS}."
+                f"Displaying only the first {MAX_RAW_ROWS} rows out of {len(cleaned)} retrieved from the Buy&Bill database. "
+                "Contact the data admin if you require a full export."
             )
+            trimmed = cleaned.head(MAX_RAW_ROWS)
+            raw_columns = trimmed.columns.tolist()
+            raw_rows = [
+                [_serialize_value(value) for value in row]
+                for row in trimmed.to_numpy().tolist()
+            ]
         else:
             raw_columns = cleaned.columns.tolist()
             raw_rows = [
@@ -246,6 +254,7 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
         debug_logs=debug_output,
         sql=final_sql,
         charts=[],
+        raw_data_note=raw_data_note or None,
     )
     if raw_data_note:
         response.analysis_html += f"\n<p><em>{raw_data_note}</em></p>"
