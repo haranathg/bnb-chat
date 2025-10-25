@@ -11,11 +11,7 @@ Performs:
 
 import os
 import re
-import platform
-import subprocess
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import json
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
@@ -101,68 +97,6 @@ def safe_execute_sql(question, sql):
 
 
 # =============================================================================
-#  Visualization Helpers
-# =============================================================================
-def visualize_results(df: pd.DataFrame, question: str, summary: str):
-    """Enhanced contextual chart with summary overlay."""
-    if df.empty:
-        print("⚠️ No data to visualize.")
-        return
-
-    sns.set(style="whitegrid", font_scale=1.1)
-    plt.figure(figsize=(12, 7))
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    text_cols = df.select_dtypes(exclude="number").columns.tolist()
-
-    plt.suptitle(f"Insight Visualization: {question}", fontsize=14, fontweight="bold")
-
-    if len(numeric_cols) == 1 and len(text_cols) >= 1:
-        x, y = text_cols[0], numeric_cols[0]
-        df_sorted = df.sort_values(by=y, ascending=False).head(10)
-        palette = sns.color_palette("crest", n_colors=len(df_sorted))
-        sns.barplot(data=df_sorted, x=x, y=y, hue=x, dodge=False, palette=palette, legend=False)
-        plt.legend([], [], frameon=False)
-        plt.xticks(rotation=45, ha="right")
-        plt.ylabel(y)
-        plt.title(f"Top 10 by {y}")
-        for idx, val in enumerate(df_sorted[y]):
-            plt.text(idx, val, f"{val:.2f}", ha="center", va="bottom", fontsize=9)
-
-    elif len(numeric_cols) >= 2:
-        sns.scatterplot(data=df, x=numeric_cols[0], y=numeric_cols[1],
-                        hue=text_cols[0] if text_cols else None, s=100, palette="viridis")
-        plt.xlabel(numeric_cols[0])
-        plt.ylabel(numeric_cols[1])
-        plt.title(f"{numeric_cols[0]} vs {numeric_cols[1]}")
-    else:
-        plt.axis("off")
-        plt.table(cellText=df.head(10).values, colLabels=df.columns, loc="center")
-
-    plt.figtext(0.5, 0.02, f"Summary: {summary[:400]}...", wrap=True, ha="center",
-                fontsize=10, color="dimgray")
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
-    plt.savefig("last_result.png", dpi=300)
-    print("📈 Chart saved as: last_result.png")
-    open_chart_image("last_result.png")
-
-
-def open_chart_image(image_path="last_result.png"):
-    """Open chart image cross-platform."""
-    if not os.path.exists(image_path):
-        print(f"⚠️ Chart not found: {image_path}")
-        return
-    print(f"🖼️ Opening chart: {image_path}")
-    if platform.system() == "Darwin":
-        subprocess.run(["open", image_path])
-    elif platform.system() == "Windows":
-        os.startfile(image_path)
-    elif platform.system() == "Linux":
-        subprocess.run(["xdg-open", image_path])
-    else:
-        print("⚠️ Unsupported OS — open manually.")
-
-
-# =============================================================================
 #  Summarizer Stage
 # =============================================================================
 summary_prompt = PromptTemplate(
@@ -190,7 +124,6 @@ def summarize_stage(inputs):
     response = llm.invoke([HumanMessage(content=formatted)])
     summary = response.content.strip()
     print("\n🧾 Insight Summary:\n", summary)
-    visualize_results(df, question, summary)
     return summary
 
 # =============================================================================

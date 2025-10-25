@@ -1,4 +1,3 @@
-import base64
 import io
 import os
 from contextlib import redirect_stderr, redirect_stdout
@@ -6,10 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, List, Optional
 import re
-
-import matplotlib.pyplot as plt
 import pandas as pd
-import seaborn as sns
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -77,81 +73,82 @@ def _serialize_value(value: Any) -> Any:
     return str(value)
 
 
-def _format_analysis_html(summary: str, chart_uri: Optional[str]) -> str:
+def _format_analysis_html(summary: str) -> str:
     paragraphs = [
         f"<p>{line.strip()}</p>"
         for line in summary.strip().split("\n\n")
         if line.strip()
     ]
     html = "\n".join(paragraphs) if paragraphs else "<p>No analysis available.</p>"
-    if chart_uri:
-        html += f'\n<div class="mt-4"><img src="{chart_uri}" alt="Insight chart" /></div>'
     return html
 
 
-def _render_chart_to_base64(df: pd.DataFrame, question: str, summary: str) -> Optional[str]:
-    if df.empty:
-        return None
+def _build_chart_specs(df: pd.DataFrame) -> List[dict]:
+    charts: List[dict] = []
+    if df is None or df.empty:
+        return charts
 
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
     text_cols = df.select_dtypes(exclude="number").columns.tolist()
-    if not numeric_cols:
-        return None
 
-    sns.set(style="whitegrid", font_scale=1.1)
-    fig, ax = plt.subplots(figsize=(10, 6))
-
-    try:
-        if len(numeric_cols) == 1 and text_cols:
-            x_col = text_cols[0]
-            y_col = numeric_cols[0]
-            df_sorted = df.sort_values(by=y_col, ascending=False).head(10)
-            palette = sns.color_palette("crest", n_colors=len(df_sorted))
-            sns.barplot(
-                data=df_sorted,
-                x=x_col,
-                y=y_col,
-                hue=x_col,
-                dodge=False,
-                palette=palette,
-                legend=False,
-                ax=ax,
+    if numeric_cols and text_cols:
+        x_col = text_cols[0]
+        y_col = numeric_cols[0]
+        filtered = df[[x_col, y_col]].dropna()
+        if not filtered.empty:
+            filtered = filtered.sort_values(by=y_col, ascending=False).head(10)
+            charts.append(
+                {
+                    "data": [
+                        {
+                            "type": "bar",
+                            "x": filtered[x_col].astype(str).tolist(),
+                            "y": filtered[y_col].tolist(),
+                            "marker": {"color": "#4f46e5"},
+                        }
+                    ],
+                    "layout": {
+                        "title": f"Top {len(filtered)} {x_col} by {y_col}",
+                        "xaxis": {"title": x_col, "tickangle": -45},
+                        "yaxis": {"title": y_col},
+                        "margin": {"l": 60, "r": 20, "t": 60, "b": 120},
+                    },
+                }
             )
-            ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
-            ax.set_title(f"Top 10 by {y_col}")
-            ax.set_ylabel(y_col)
-        elif len(numeric_cols) >= 2:
-            sns.scatterplot(
-                data=df,
-                x=numeric_cols[0],
-                y=numeric_cols[1],
-                hue=text_cols[0] if text_cols else None,
-                palette="viridis",
-                s=100,
-                ax=ax,
+            return charts
+
+    if len(numeric_cols) >= 2:
+        x_col, y_col = numeric_cols[:2]
+        filtered = df[[x_col, y_col]].dropna()
+        if not filtered.empty:
+            limit = min(len(filtered), 500)
+            filtered = filtered.head(limit)
+            trace = {
+                "type": "scatter",
+                "mode": "markers",
+                "x": filtered[x_col].tolist(),
+                "y": filtered[y_col].tolist(),
+                "marker": {"size": 9, "color": "#4f46e5", "opacity": 0.8},
+            }
+            if text_cols:
+                labels = df.loc[filtered.index, text_cols[0]].astype(str).tolist()
+                trace["text"] = labels
+                trace["hovertemplate"] = (
+                    f"{text_cols[0]}: %{{text}}<br>{x_col}: %{{x}}<br>{y_col}: %{{y}}<extra></extra>"
+                )
+            charts.append(
+                {
+                    "data": [trace],
+                    "layout": {
+                        "title": f"{y_col} vs {x_col}",
+                        "xaxis": {"title": x_col},
+                        "yaxis": {"title": y_col},
+                        "margin": {"l": 60, "r": 20, "t": 60, "b": 60},
+                    },
+                }
             )
-            ax.set_title(f"{numeric_cols[0]} vs {numeric_cols[1]}")
-        else:
-            return None
 
-        fig.suptitle(f"Insight Visualization: {question}", fontsize=14, fontweight="bold")
-        fig.text(
-            0.5,
-            0.01,
-            (summary[:250] + "...") if len(summary) > 250 else summary,
-            ha="center",
-            fontsize=9,
-            color="dimgray",
-            wrap=True,
-        )
-
-        buffer = io.BytesIO()
-        fig.tight_layout(rect=[0, 0.05, 1, 0.95])
-        fig.savefig(buffer, format="png", dpi=200, bbox_inches="tight")
-        encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
-        return f"data:image/png;base64,{encoded}"
-    finally:
-        plt.close(fig)
+    return charts
 
 
 def _validate_sql_for_guardrails(question: str, sql: str) -> None:
@@ -219,8 +216,8 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
     retriever.debug = previous_debug
 
     summary = _build_summary(question, df)
-    chart_uri = _render_chart_to_base64(df, question, summary)
-    analysis_html = _format_analysis_html(summary, chart_uri)
+    charts = _build_chart_specs(df)
+    analysis_html = _format_analysis_html(summary)
 
     raw_columns = None
     raw_rows = None
@@ -253,7 +250,7 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
         raw_data=raw_rows,
         debug_logs=debug_output,
         sql=final_sql,
-        charts=[],
+        charts=charts,
         raw_data_note=raw_data_note or None,
     )
     if raw_data_note:

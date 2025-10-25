@@ -110,7 +110,11 @@ function App() {
     }
     setError(null);
 
-    if (loadFromCache(targetQuery)) {
+    const resolvedShowRaw = opts.showRaw ?? showRaw;
+    const resolvedShowDebug = opts.showDebug ?? showDebug;
+    const shouldBypassCache = resolvedShowDebug;
+
+    if (!shouldBypassCache && loadFromCache(targetQuery)) {
       addToHistory(targetQuery);
       return;
     }
@@ -126,8 +130,8 @@ function App() {
         body: JSON.stringify({
           query: targetQuery,
           options: {
-            show_raw: opts.showRaw ?? showRaw,
-            debug: opts.showDebug ?? showDebug,
+            show_raw: resolvedShowRaw,
+            debug: resolvedShowDebug,
           },
         }),
       });
@@ -145,7 +149,9 @@ function App() {
 
       const data = await res.json();
       setResponse(data);
-      updateCache(targetQuery, data);
+      if (!shouldBypassCache) {
+        updateCache(targetQuery, data);
+      }
       addToHistory(targetQuery);
     } catch (err) {
       setError(err.message || "Unable to process query.");
@@ -160,9 +166,7 @@ function App() {
 
   const handleHistorySelect = (selectedQuery) => {
     setQuery(selectedQuery);
-    if (!loadFromCache(selectedQuery)) {
-      runQuery(selectedQuery);
-    }
+    runQuery(selectedQuery);
     setSidebarOpen(false);
   };
 
