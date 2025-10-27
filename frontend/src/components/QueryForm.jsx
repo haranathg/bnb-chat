@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 function QueryForm({
   query,
   onChange,
@@ -10,6 +12,8 @@ function QueryForm({
   onToggleDebug,
   onChangeAnalysisMode,
 }) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const handleSubmit = (event) => {
     event.preventDefault();
     onSubmit();
@@ -27,25 +31,7 @@ function QueryForm({
             onChange={(event) => onChange(event.target.value)}
           />
         </label>
-        <div className="flex flex-wrap items-center gap-6 text-sm text-gray-700">
-          <label className="inline-flex items-center gap-2">
-            <input
-              type="checkbox"
-              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-              checked={showRaw}
-              onChange={(event) => onToggleRaw(event.target.checked)}
-            />
-            Show raw data
-          </label>
-          <label className="inline-flex items-center gap-2">
-            <input
-              type="checkbox"
-              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-              checked={showDebug}
-              onChange={(event) => onToggleDebug(event.target.checked)}
-            />
-            Show debug logs
-          </label>
+        <div className="flex flex-wrap items-center justify-between gap-4 text-sm text-gray-700">
           <fieldset className="flex flex-wrap items-center gap-3">
             <span className="font-medium text-gray-700">Analysis detail:</span>
             <label className="inline-flex items-center gap-2">
@@ -71,7 +57,36 @@ function QueryForm({
               Elaborate
             </label>
           </fieldset>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((prev) => !prev)}
+            className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+          >
+            {showAdvanced ? "Hide troubleshooting options" : "Troubleshooting options"}
+          </button>
         </div>
+        {showAdvanced && (
+          <div className="flex flex-wrap items-center justify-end gap-6 text-xs text-gray-600">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                checked={showRaw}
+                onChange={(event) => onToggleRaw(event.target.checked)}
+              />
+              Show raw data
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                checked={showDebug}
+                onChange={(event) => onToggleDebug(event.target.checked)}
+              />
+              Show debug logs
+            </label>
+          </div>
+        )}
         <div>
           <button
             type="submit"
