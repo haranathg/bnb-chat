@@ -3,7 +3,7 @@ import os
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 import re
 import pandas as pd
 from dotenv import load_dotenv
@@ -46,6 +46,9 @@ def health_check():
 class QueryOptions(BaseModel):
     show_raw: bool = Field(default=True, description="Return raw data table")
     debug: bool = Field(default=False, description="Include retriever debug logs")
+    analysis_mode: Literal["brief", "elaborate"] = Field(
+        default="elaborate", description="Control verbosity of the insight summary"
+    )
 
 
 class QueryRequest(BaseModel):
@@ -165,7 +168,7 @@ def _validate_sql_for_guardrails(question: str, sql: str) -> None:
         )
 
 
-def _build_summary(question: str, df: pd.DataFrame) -> str:
+def _build_summary(question: str, df: pd.DataFrame, mode: str) -> str:
     if df is None or df.empty:
         return (
             f"Hmm 🤔 I didn’t find any data returned for your question:\n"
@@ -174,7 +177,14 @@ def _build_summary(question: str, df: pd.DataFrame) -> str:
         )
 
     data_str = df.head(10).to_markdown(index=False)
-    prompt = summary_prompt.format(question=question, data=data_str)
+    mode_instruction = (
+        "Provide a concise executive summary in no more than two short sentences. "
+        "Highlight only the single most important quantitative takeaway and any critical caveat."
+        if mode == "brief"
+        else "Provide a thoughtful, well-structured analysis in up to five sentences. "
+        "Highlight key trends, context, notable outliers, and any important caveats."
+    )
+    prompt = summary_prompt.format(question=question, data=data_str) + f"\n\n{mode_instruction}"
     result = llm.invoke([HumanMessage(content=prompt)])
     return result.content.strip()
 
@@ -215,7 +225,7 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
     _validate_sql_for_guardrails(question, final_sql)
     retriever.debug = previous_debug
 
-    summary = _build_summary(question, df)
+    summary = _build_summary(question, df, options.analysis_mode)
     charts = _build_chart_specs(df)
     analysis_html = _format_analysis_html(summary)
 

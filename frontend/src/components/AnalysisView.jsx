@@ -1,5 +1,14 @@
+import { Suspense, lazy } from "react";
 import DOMPurify from "dompurify";
-import Plot from "react-plotly.js";
+
+const Plot = lazy(async () => {
+  const [{ default: createPlotComponent }, plotlyModule] = await Promise.all([
+    import("react-plotly.js/factory"),
+    import("plotly.js/dist/plotly.min.js"),
+  ]);
+  const Plotly = plotlyModule.default ?? plotlyModule;
+  return { default: createPlotComponent(Plotly) };
+});
 
 function AnalysisView({ response }) {
   const analysisHtml = response?.analysis_html
@@ -40,24 +49,50 @@ function AnalysisView({ response }) {
                 key={index}
                 className="overflow-hidden rounded-xl border border-gray-200 bg-white p-2 shadow-sm"
               >
-                <Plot
-                  data={figure.data || []}
-                  layout={{
-                    margin: { t: 40, r: 20, b: 40, l: 50 },
-                    autosize: true,
-                    paper_bgcolor: "transparent",
-                    plot_bgcolor: "transparent",
-                    ...(figure.layout || {}),
-                  }}
-                  config={{
-                    responsive: true,
-                    displaylogo: false,
-                    ...figure.config,
-                  }}
-                  style={{ width: "100%", height: "100%" }}
-                  useResizeHandler
-                  className="h-[320px] w-full"
-                />
+                <Suspense
+                  fallback={
+                    <div className="flex h-[360px] w-full items-center justify-center text-xs text-gray-500">
+                      Loading chart…
+                    </div>
+                  }
+                >
+                  <Plot
+                    data={figure.data || []}
+                    layout={{
+                      margin: { t: 40, r: 20, b: 40, l: 50 },
+                      autosize: true,
+                      height: 360,
+                      paper_bgcolor: "transparent",
+                      plot_bgcolor: "transparent",
+                      template: "plotly_white",
+                      font: {
+                        family: "Inter, sans-serif",
+                        size: 12,
+                        color: "#1f2937",
+                      },
+                      legend: {
+                        orientation: "h",
+                        yanchor: "bottom",
+                        y: -0.2,
+                      },
+                      ...(figure.layout || {}),
+                    }}
+                    config={{
+                      responsive: true,
+                      displaylogo: false,
+                      modeBarButtonsToRemove: ["autoScale2d", "select2d", "lasso2d"],
+                      toImageButtonOptions: {
+                        format: "png",
+                        filename: "bnb-chart",
+                        scale: 2,
+                      },
+                      ...figure.config,
+                    }}
+                    style={{ width: "100%", height: "100%" }}
+                    useResizeHandler
+                    className="h-[360px] w-full"
+                  />
+                </Suspense>
               </div>
             ))}
           </div>

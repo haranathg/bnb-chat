@@ -49,6 +49,7 @@ function App() {
   const [cache, setCache] = useState(getInitialCache);
   const [showRaw, setShowRaw] = useState(true);
   const [showDebug, setShowDebug] = useState(false);
+  const [analysisMode, setAnalysisMode] = useState("elaborate");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -68,11 +69,11 @@ function App() {
     });
   };
 
-  const updateCache = (nextQuery, data) => {
+  const updateCache = (cacheKey, data) => {
     setCache((prev) => {
       const merged = {
         ...prev,
-        [nextQuery]: { data, timestamp: Date.now() },
+        [cacheKey]: { data, timestamp: Date.now() },
       };
       const trimmedEntries = Object.entries(merged)
         .sort((a, b) => b[1].timestamp - a[1].timestamp)
@@ -81,13 +82,13 @@ function App() {
     });
   };
 
-  const loadFromCache = (targetQuery) => {
-    const cachedItem = cache[targetQuery];
+  const loadFromCache = (cacheKey) => {
+    const cachedItem = cache[cacheKey];
     if (!cachedItem) return false;
     if (Date.now() - cachedItem.timestamp > CACHE_TTL) {
       setCache((prev) => {
         const cloned = { ...prev };
-        delete cloned[targetQuery];
+        delete cloned[cacheKey];
         return cloned;
       });
       return false;
@@ -112,9 +113,15 @@ function App() {
 
     const resolvedShowRaw = opts.showRaw ?? showRaw;
     const resolvedShowDebug = opts.showDebug ?? showDebug;
+    const resolvedAnalysisMode = opts.analysisMode ?? analysisMode;
+    const cacheKey = JSON.stringify({
+      query: targetQuery,
+      showRaw: resolvedShowRaw,
+      analysisMode: resolvedAnalysisMode,
+    });
     const shouldBypassCache = resolvedShowDebug;
 
-    if (!shouldBypassCache && loadFromCache(targetQuery)) {
+    if (!shouldBypassCache && loadFromCache(cacheKey)) {
       addToHistory(targetQuery);
       return;
     }
@@ -132,6 +139,7 @@ function App() {
           options: {
             show_raw: resolvedShowRaw,
             debug: resolvedShowDebug,
+            analysis_mode: resolvedAnalysisMode,
           },
         }),
       });
@@ -150,7 +158,7 @@ function App() {
       const data = await res.json();
       setResponse(data);
       if (!shouldBypassCache) {
-        updateCache(targetQuery, data);
+        updateCache(cacheKey, data);
       }
       addToHistory(targetQuery);
     } catch (err) {
@@ -185,8 +193,10 @@ function App() {
           loading={isLoading}
           showRaw={showRaw}
           showDebug={showDebug}
+          analysisMode={analysisMode}
           onToggleRaw={setShowRaw}
           onToggleDebug={setShowDebug}
+          onChangeAnalysisMode={setAnalysisMode}
         />
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -201,7 +211,7 @@ function App() {
         />
       </div>
     ),
-    [query, showRaw, showDebug, response, isLoading, error]
+    [query, showRaw, showDebug, analysisMode, response, isLoading, error]
   );
 
   if (!token) {

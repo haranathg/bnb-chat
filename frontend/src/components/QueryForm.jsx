@@ -4,9 +4,11 @@ function QueryForm({
   onSubmit,
   loading,
   showRaw,
+  analysisMode,
   showDebug,
   onToggleRaw,
   onToggleDebug,
+  onChangeAnalysisMode,
 }) {
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -44,6 +46,31 @@ function QueryForm({
             />
             Show debug logs
           </label>
+          <fieldset className="flex flex-wrap items-center gap-3">
+            <span className="font-medium text-gray-700">Analysis detail:</span>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="radio"
+                name="analysis-detail"
+                value="brief"
+                className="text-indigo-600 focus:ring-indigo-500"
+                checked={analysisMode === "brief"}
+                onChange={() => onChangeAnalysisMode("brief")}
+              />
+              Brief
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="radio"
+                name="analysis-detail"
+                value="elaborate"
+                className="text-indigo-600 focus:ring-indigo-500"
+                checked={analysisMode === "elaborate"}
+                onChange={() => onChangeAnalysisMode("elaborate")}
+              />
+              Elaborate
+            </label>
+          </fieldset>
         </div>
         <div>
           <button
