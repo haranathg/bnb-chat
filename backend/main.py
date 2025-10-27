@@ -26,6 +26,7 @@ from bnb_lcel_pipeline import (  # noqa: E402
 
 AUTH_TOKEN = os.getenv("AUTH_TOKEN")
 MAX_RAW_ROWS = int(os.getenv("MAX_RAW_ROWS", "10"))
+DEFAULT_SQL_LIMIT = int(os.getenv("DEFAULT_SQL_LIMIT", "50"))
 
 app = FastAPI(title="bnb-chat-with-data API")
 
@@ -154,6 +155,16 @@ def _build_chart_specs(df: pd.DataFrame) -> List[dict]:
     return charts
 
 
+def _ensure_limit(sql: str) -> tuple[str, bool]:
+    """Guarantee a LIMIT clause exists; append one if missing."""
+    if re.search(r"\blimit\b", sql, re.IGNORECASE):
+        return sql, False
+
+    cleaned = sql.strip().rstrip(";")
+    enforced_sql = f"{cleaned}\nLIMIT {DEFAULT_SQL_LIMIT};"
+    return enforced_sql, True
+
+
 def _validate_sql_for_guardrails(question: str, sql: str) -> None:
     lowered = sql.lower()
     if re.search(r"\blimit\b", lowered) is None:
@@ -189,9 +200,10 @@ def _build_summary(question: str, df: pd.DataFrame, mode: str) -> str:
     return result.content.strip()
 
 
-def _execute_with_retry(question: str, sql: str) -> tuple[pd.DataFrame, str]:
+def _execute_with_retry(question: str, sql: str) -> tuple[pd.DataFrame, str, bool]:
     df = execute_sql(sql)
     final_sql = sql
+    limit_applied = False
     if df.empty:
         retry_prompt = (
             "You generated the following SQL, but it caused an error or returned no data:\n"
@@ -207,9 +219,11 @@ def _execute_with_retry(question: str, sql: str) -> tuple[pd.DataFrame, str]:
             "Return only the corrected SQL query without markdown."
         )
         fixed_sql = clean_sql(llm.invoke([HumanMessage(content=retry_prompt)]).content)
+        fixed_sql, added_limit = _ensure_limit(fixed_sql)
+        limit_applied = limit_applied or added_limit
         df = execute_sql(fixed_sql)
         final_sql = fixed_sql
-    return df, final_sql
+    return df, final_sql, limit_applied
 
 
 def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
@@ -219,9 +233,11 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
     buffer = io.StringIO()
     with redirect_stdout(buffer), redirect_stderr(buffer):
         sql = generate_sql(question)
+        sql, limit_added_initial = _ensure_limit(sql)
         _validate_sql_for_guardrails(question, sql)
-        df, final_sql = _execute_with_retry(question, sql)
+        df, final_sql, limit_added_retry = _execute_with_retry(question, sql)
 
+    final_sql, limit_added_post = _ensure_limit(final_sql)
     _validate_sql_for_guardrails(question, final_sql)
     retriever.debug = previous_debug
 
@@ -254,6 +270,16 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
 
     debug_output = buffer.getvalue().strip() if options.debug else ""
 
+    limit_note_required = any([limit_added_initial, limit_added_retry, limit_added_post])
+    limit_note = (
+        f"Results limited to the top {DEFAULT_SQL_LIMIT} rows to preserve query performance."
+        if limit_note_required
+        else ""
+    )
+
+    combined_note_parts = [note for note in [raw_data_note, limit_note] if note]
+    combined_note = " ".join(combined_note_parts)
+
     response = QueryResponse(
         analysis_html=analysis_html,
         raw_columns=raw_columns,
@@ -261,10 +287,10 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
         debug_logs=debug_output,
         sql=final_sql,
         charts=charts,
-        raw_data_note=raw_data_note or None,
+        raw_data_note=combined_note or None,
     )
-    if raw_data_note:
-        response.analysis_html += f"\n<p><em>{raw_data_note}</em></p>"
+    if combined_note:
+        response.analysis_html += f"\n<p><em>{combined_note}</em></p>"
     return response
 
 
