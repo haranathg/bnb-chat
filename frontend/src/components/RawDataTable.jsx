@@ -1,7 +1,21 @@
 function RawDataTable({ response, visible }) {
   const rows = response?.raw_data;
-  if (!visible || !rows || rows.length === 0) {
+  const note = response?.raw_data_note;
+
+  if (!visible) {
     return null;
+  }
+
+  if (!rows || rows.length === 0) {
+    return (
+      <section className="card p-6 space-y-3">
+        <h2 className="text-base font-semibold text-gray-900">Raw data</h2>
+        <p className="text-sm text-gray-600">
+          No data rows were returned for this query. Try refining the question or adjusting filters.
+        </p>
+        {note && <p className="text-xs text-indigo-700">{note}</p>}
+      </section>
+    );
   }
 
   let headers = [];
@@ -20,8 +34,6 @@ function RawDataTable({ response, visible }) {
       normalizedRows = rows.map((row) => headers.map((header) => row[header]));
     }
   }
-
-  const note = response?.raw_data_note;
 
   return (
     <section className="card p-6 space-y-4">

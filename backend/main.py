@@ -92,13 +92,31 @@ def _build_chart_specs(df: pd.DataFrame) -> List[dict]:
     if df is None or df.empty:
         return charts
 
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    text_cols = df.select_dtypes(exclude="number").columns.tolist()
+    working = df.copy()
+
+    # Treat identifier-like numeric columns as categorical so they render correctly on the x-axis.
+    id_like_pattern = re.compile(r"(code|id|number|npi)$", re.IGNORECASE)
+
+    def _format_identifier(value: Any) -> str:
+        if pd.isna(value):
+            return ""
+        if isinstance(value, (int,)):
+            return str(value)
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+
+    for column in working.select_dtypes(include="number").columns:
+        if id_like_pattern.search(column):
+            working[column] = working[column].apply(_format_identifier)
+
+    numeric_cols = working.select_dtypes(include="number").columns.tolist()
+    text_cols = working.select_dtypes(exclude="number").columns.tolist()
 
     if numeric_cols and text_cols:
         x_col = text_cols[0]
         y_col = numeric_cols[0]
-        filtered = df[[x_col, y_col]].dropna()
+        filtered = working[[x_col, y_col]].dropna()
         if not filtered.empty:
             filtered = filtered.sort_values(by=y_col, ascending=False).head(10)
             charts.append(
@@ -113,7 +131,7 @@ def _build_chart_specs(df: pd.DataFrame) -> List[dict]:
                     ],
                     "layout": {
                         "title": f"Top {len(filtered)} {x_col} by {y_col}",
-                        "xaxis": {"title": x_col, "tickangle": -45},
+                        "xaxis": {"title": x_col, "tickangle": -45, "type": "category"},
                         "yaxis": {"title": y_col},
                         "margin": {"l": 60, "r": 20, "t": 60, "b": 120},
                     },
@@ -123,7 +141,7 @@ def _build_chart_specs(df: pd.DataFrame) -> List[dict]:
 
     if len(numeric_cols) >= 2:
         x_col, y_col = numeric_cols[:2]
-        filtered = df[[x_col, y_col]].dropna()
+        filtered = working[[x_col, y_col]].dropna()
         if not filtered.empty:
             limit = min(len(filtered), 500)
             filtered = filtered.head(limit)
