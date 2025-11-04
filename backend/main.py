@@ -7,7 +7,7 @@ from typing import Any, List, Literal, Optional
 import re
 import pandas as pd
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
@@ -23,10 +23,25 @@ from bnb_lcel_pipeline import (  # noqa: E402
     retriever,
     summary_prompt,
 )
+from sql_validator import SQLValidator, SQLValidationError  # noqa: E402
+from rate_limiter import user_rate_limiter, global_rate_limiter  # noqa: E402
 
 AUTH_TOKEN = os.getenv("AUTH_TOKEN")
 MAX_RAW_ROWS = int(os.getenv("MAX_RAW_ROWS", "10"))
 DEFAULT_SQL_LIMIT = int(os.getenv("DEFAULT_SQL_LIMIT", "50"))
+
+# Initialize SQL validator with allowed tables
+sql_validator = SQLValidator(
+    allowed_tables=[
+        "drug_master",
+        "drug_class",
+        "asp_history",
+        "awp_history",
+        "wac_history",
+    ],
+    require_limit=True,
+    max_limit=int(os.getenv("MAX_SQL_LIMIT", "1000")),
+)
 
 app = FastAPI(title="bnb-chat-with-data API")
 
@@ -184,17 +199,15 @@ def _ensure_limit(sql: str) -> tuple[str, bool]:
 
 
 def _validate_sql_for_guardrails(question: str, sql: str) -> None:
-    lowered = sql.lower()
-    if re.search(r"\blimit\b", lowered) is None:
-        raise HTTPException(
-            status_code=400,
-            detail="For security reasons, generated SQL must include a LIMIT clause. Please refine the question.",
-        )
-    if re.search(r"select\s+\*", lowered):
-        raise HTTPException(
-            status_code=400,
-            detail="Queries must reference explicit columns; 'SELECT *' is not allowed.",
-        )
+    """
+    Validate SQL using AST-based parser for robust security checks.
+    Raises SQLValidationError if validation fails.
+    """
+    try:
+        sql_validator.validate(sql)
+    except SQLValidationError as e:
+        # Re-raise as SQLValidationError so it's caught by the endpoint handler
+        raise e
 
 
 def _build_summary(question: str, df: pd.DataFrame, mode: str) -> str:
@@ -312,26 +325,73 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
     return response
 
 
-def _authorize(authorization: Optional[str] = Header(default=None)) -> None:
-    if not AUTH_TOKEN:
-        return
-    if not authorization or not authorization.startswith("Bearer "):
+def _authorize(
+    request: Request, authorization: Optional[str] = Header(default=None)
+) -> str:
+    """
+    Authorize request and return user identifier for rate limiting.
+    Returns a hash of the token or IP address for rate limit tracking.
+    """
+    import hashlib
+
+    # Check global rate limit first
+    allowed, retry_after = global_rate_limiter.check_rate_limit()
+    if not allowed:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Global rate limit exceeded. Retry after {retry_after:.1f} seconds.",
+            headers={"Retry-After": str(int(retry_after) + 1)},
         )
-    token = authorization.split(" ", 1)[1].strip()
-    if token != AUTH_TOKEN:
+
+    # Authenticate
+    if AUTH_TOKEN:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
+            )
+        token = authorization.split(" ", 1)[1].strip()
+        if token != AUTH_TOKEN:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
+            )
+        # Use hash of token as user identifier for rate limiting
+        user_id = hashlib.sha256(token.encode()).hexdigest()[:16]
+    else:
+        # No auth token configured, use IP address
+        client_ip = request.client.host if request.client else "unknown"
+        user_id = hashlib.sha256(client_ip.encode()).hexdigest()[:16]
+
+    # Check per-user rate limit
+    allowed, retry_after = user_rate_limiter.check_rate_limit(user_id)
+    if not allowed:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. You can make {user_rate_limiter.requests_per_minute} requests per minute. Retry after {retry_after:.1f} seconds.",
+            headers={"Retry-After": str(int(retry_after) + 1)},
         )
+
+    return user_id
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query_endpoint(payload: QueryRequest, _: None = Depends(_authorize)):
+async def query_endpoint(
+    payload: QueryRequest, user_id: str = Depends(_authorize)
+):
     try:
         return run_pipeline(payload.query.strip(), payload.options)
+    except SQLValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SQL validation failed: {str(exc)}",
+        ) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # Don't expose internal error details to clients
+        import logging
+        logging.error(f"Query processing error: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while processing your query. Please try again or contact support.",
+        ) from exc
 
 
 if __name__ == "__main__":
