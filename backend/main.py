@@ -82,13 +82,46 @@ class QueryResponse(BaseModel):
     raw_data_note: Optional[str] = None
 
 
-def _serialize_value(value: Any) -> Any:
-    if value is None or isinstance(value, (bool, int, float, str)):
+def _serialize_value(value: Any, column_name: str = "") -> Any:
+    """
+    Serialize values for JSON response.
+    Formats monetary/pricing columns to 2 decimal places.
+    """
+    if value is None or isinstance(value, (bool, str)):
         return value
+
+    # Identify monetary/pricing columns (but exclude ratios/percentages)
+    col_lower = column_name.lower()
+
+    # Exclude ratio and percentage columns
+    if 'ratio' in col_lower or 'pct' in col_lower or 'percent' in col_lower:
+        is_monetary = False
+    else:
+        is_monetary = any([
+            'price' in col_lower,
+            'asp' in col_lower,
+            'wac' in col_lower,
+            'awp' in col_lower,
+            'cost' in col_lower,
+            'payment' in col_lower,
+            'amount' in col_lower,
+            'limit' in col_lower and 'payment' in col_lower,
+        ])
+
+    # Handle Decimal types
     if isinstance(value, Decimal):
-        return float(value)
+        float_val = float(value)
+        # Format monetary values to 2 decimals, others as-is
+        return round(float_val, 2) if is_monetary else float_val
+
+    # Handle float/int types
+    if isinstance(value, (int, float)):
+        # Format monetary values to 2 decimals
+        return round(float(value), 2) if is_monetary else value
+
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+
     return str(value)
 
 
@@ -289,13 +322,13 @@ def run_pipeline(question: str, options: QueryOptions) -> QueryResponse:
             trimmed = cleaned.head(MAX_RAW_ROWS)
             raw_columns = trimmed.columns.tolist()
             raw_rows = [
-                [_serialize_value(value) for value in row]
+                [_serialize_value(value, col) for value, col in zip(row, raw_columns)]
                 for row in trimmed.to_numpy().tolist()
             ]
         else:
             raw_columns = cleaned.columns.tolist()
             raw_rows = [
-                [_serialize_value(value) for value in row]
+                [_serialize_value(value, col) for value, col in zip(row, raw_columns)]
                 for row in cleaned.to_numpy().tolist()
             ]
 
