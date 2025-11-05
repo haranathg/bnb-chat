@@ -28,7 +28,7 @@ function Login({ onLogin }) {
           <input
             type="password"
             className="mt-1 w-full rounded-lg border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-            placeholder=""
+            placeholder="Enter your password"
             value={tokenInput}
             onChange={(event) => setTokenInput(event.target.value)}
           />
