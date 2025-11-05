@@ -435,6 +435,63 @@ def _authorize(
     return user_id
 
 
+@app.get("/admin/audit-logs")
+async def get_audit_logs(
+    date: Optional[str] = None,
+    user_hash: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None)
+):
+    """
+    Admin endpoint to retrieve audit logs.
+    Requires valid authentication.
+
+    Query params:
+    - date: YYYY-MM-DD format (defaults to today)
+    - user_hash: Filter by specific user hash (optional)
+    """
+    # Authenticate (reuse same auth logic)
+    if AUTH_TOKEN:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
+            )
+        token = authorization.split(" ", 1)[1].strip()
+        valid_tokens = [t.strip() for t in AUTH_TOKEN.split(",")]
+        if token not in valid_tokens:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
+            )
+
+    audit_logger = get_audit_logger()
+
+    # Parse date or use today
+    from datetime import datetime
+    if date:
+        try:
+            log_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid date format. Use YYYY-MM-DD"
+            )
+    else:
+        log_date = datetime.now().date()
+
+    # Get all queries for the date
+    queries = audit_logger.get_all_queries(date=log_date)
+
+    # Filter by user hash if provided
+    if user_hash:
+        queries = [q for q in queries if q.get("user_hash") == user_hash]
+
+    return {
+        "date": log_date.isoformat(),
+        "total_queries": len(queries),
+        "user_hash_filter": user_hash,
+        "queries": queries
+    }
+
+
 @app.post("/query", response_model=QueryResponse)
 async def query_endpoint(
     payload: QueryRequest, user_id: str = Depends(_authorize)
