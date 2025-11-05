@@ -25,6 +25,7 @@ from bnb_lcel_pipeline import (  # noqa: E402
 )
 from sql_validator import SQLValidator, SQLValidationError  # noqa: E402
 from rate_limiter import user_rate_limiter, global_rate_limiter  # noqa: E402
+from audit_logger import get_audit_logger  # noqa: E402
 
 AUTH_TOKEN = os.getenv("AUTH_TOKEN")
 MAX_RAW_ROWS = int(os.getenv("MAX_RAW_ROWS", "10"))
@@ -408,11 +409,14 @@ def _authorize(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
             )
         token = authorization.split(" ", 1)[1].strip()
-        if token != AUTH_TOKEN:
+
+        # Support multiple tokens (comma-separated in AUTH_TOKEN env var)
+        valid_tokens = [t.strip() for t in AUTH_TOKEN.split(",")]
+        if token not in valid_tokens:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized"
             )
-        # Use hash of token as user identifier for rate limiting
+        # Use full hash of token as user identifier for audit logging and rate limiting
         user_id = hashlib.sha256(token.encode()).hexdigest()[:16]
     else:
         # No auth token configured, use IP address
@@ -435,14 +439,69 @@ def _authorize(
 async def query_endpoint(
     payload: QueryRequest, user_id: str = Depends(_authorize)
 ):
+    import time
+    start_time = time.time()
+    audit_logger = get_audit_logger()
+
     try:
-        return run_pipeline(payload.query.strip(), payload.options)
+        response = run_pipeline(payload.query.strip(), payload.options)
+        execution_time_ms = (time.time() - start_time) * 1000
+
+        # Log successful query
+        audit_logger.log_query(
+            user_id=user_id,
+            question=payload.query.strip(),
+            sql=response.sql,
+            data_rows=response.raw_data,
+            data_columns=response.raw_columns,
+            analysis=response.analysis_html,
+            execution_time_ms=execution_time_ms,
+            options={
+                "show_raw": payload.options.show_raw,
+                "debug": payload.options.debug,
+                "analysis_mode": payload.options.analysis_mode,
+            }
+        )
+
+        return response
     except SQLValidationError as exc:
+        execution_time_ms = (time.time() - start_time) * 1000
+
+        # Log failed query
+        audit_logger.log_query(
+            user_id=user_id,
+            question=payload.query.strip(),
+            sql="",
+            error=f"SQL validation failed: {str(exc)}",
+            execution_time_ms=execution_time_ms,
+            options={
+                "show_raw": payload.options.show_raw,
+                "debug": payload.options.debug,
+                "analysis_mode": payload.options.analysis_mode,
+            }
+        )
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"SQL validation failed: {str(exc)}",
         ) from exc
     except Exception as exc:
+        execution_time_ms = (time.time() - start_time) * 1000
+
+        # Log failed query
+        audit_logger.log_query(
+            user_id=user_id,
+            question=payload.query.strip(),
+            sql="",
+            error=str(exc),
+            execution_time_ms=execution_time_ms,
+            options={
+                "show_raw": payload.options.show_raw,
+                "debug": payload.options.debug,
+                "analysis_mode": payload.options.analysis_mode,
+            }
+        )
+
         # Don't expose internal error details to clients
         import logging
         logging.error(f"Query processing error: {exc}", exc_info=True)
