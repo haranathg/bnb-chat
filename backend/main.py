@@ -162,7 +162,32 @@ def _build_chart_specs(df: pd.DataFrame) -> List[dict]:
     text_cols = working.select_dtypes(exclude="number").columns.tolist()
 
     if numeric_cols and text_cols:
-        x_col = text_cols[0]
+        # Prefer human-readable names over codes for x-axis
+        name_patterns = ['name', 'label', 'title', 'class', 'category', 'type']
+        code_patterns = ['code', 'id', 'number', 'npi']
+
+        # Find best text column for x-axis (prefer names over codes)
+        x_col = None
+        for pattern in name_patterns:
+            for col in text_cols:
+                if pattern in col.lower():
+                    x_col = col
+                    break
+            if x_col:
+                break
+
+        # If no name column found, use first non-code column
+        if not x_col:
+            for col in text_cols:
+                is_code = any(cp in col.lower() for cp in code_patterns)
+                if not is_code:
+                    x_col = col
+                    break
+
+        # Fallback to first text column
+        if not x_col:
+            x_col = text_cols[0]
+
         y_col = numeric_cols[0]
         filtered = working[[x_col, y_col]].dropna()
         if not filtered.empty:
