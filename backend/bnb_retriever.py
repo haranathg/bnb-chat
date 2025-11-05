@@ -121,8 +121,8 @@ class BnbRetriever:
         self._debug(f"[Retriever] Top {self.top_k} matches after sorting:", matches)
 
         # ✅ Always include at least one descriptive column like 'name' or 'description'
-        important_cols = ["name", "description", "label"]
-        desc_results = index.query(vector=self.embed("drug name or description"),
+        important_cols = ["name", "description", "label", "class", "category", "type"]
+        desc_results = index.query(vector=self.embed("drug name or description or class"),
                                    top_k=5, include_metadata=True)
         desc_matches = desc_results.get("matches", []) if isinstance(desc_results, dict) else desc_results.matches
         self._debug(f"[Retriever] Descriptive column search returned {len(desc_matches)} matches.")
@@ -135,7 +135,10 @@ class BnbRetriever:
                 )
         for match in desc_matches:
             meta = match["metadata"]
-            if any(k in meta.get("column", "").lower() for k in important_cols):
+            col_name = meta.get("column", "").lower()
+            # Include columns with important keywords OR from the drug_class table
+            is_important = any(k in col_name for k in important_cols) or meta.get("table") == "drug_class"
+            if is_important:
                 # add if not already in list
                 if not any(m["table"] == meta.get("table") and m["column"] == meta.get("column") for m in matches):
                     matches.append({
